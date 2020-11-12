@@ -30,6 +30,7 @@ import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.block.ClusterBlock;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.coordination.Coordinator;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -128,8 +129,10 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
 
     @Override
     protected void doStart() {
-        // use post applied so that the state will be visible to the background recovery thread we spawn in performStateRecovery
-        clusterService.addListener(this);
+        if (DiscoveryNode.isMasterNode(clusterService.getSettings())) {
+            // use post applied so that the state will be visible to the background recovery thread we spawn in performStateRecovery
+            clusterService.addListener(this);
+        }
     }
 
     @Override
@@ -228,6 +231,7 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
 
                     @Override
                     protected void doRun() {
+                        logger.debug("performing state recovery...");
                         recoveryRunnable.run();
                     }
                 });
@@ -244,6 +248,11 @@ public class GatewayService extends AbstractLifecycleComponent implements Cluste
 
         @Override
         public ClusterState execute(final ClusterState currentState) {
+            if (currentState.blocks().hasGlobalBlock(STATE_NOT_RECOVERED_BLOCK) == false) {
+                logger.debug("cluster is already recovered");
+                return currentState;
+            }
+
             final ClusterState newState = Function.<ClusterState>identity()
                     .andThen(ClusterStateUpdaters::updateRoutingTable)
                     .andThen(ClusterStateUpdaters::removeStateNotRecoveredBlock)

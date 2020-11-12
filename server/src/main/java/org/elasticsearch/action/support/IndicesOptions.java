@@ -18,8 +18,6 @@
  */
 package org.elasticsearch.action.support;
 
-
-import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -227,23 +225,21 @@ public class IndicesOptions implements ToXContentFragment {
         return EnumSet.copyOf(expandWildcards);
     }
 
+    /**
+     * @return a copy of the {@link Option}s that these indices options will use
+     */
+    public EnumSet<Option> getOptions() {
+        return EnumSet.copyOf(options);
+    }
+
     public void writeIndicesOptions(StreamOutput out) throws IOException {
         out.writeEnumSet(options);
-        if (out.getVersion().before(Version.V_7_7_0) && expandWildcards.contains(WildcardStates.HIDDEN)) {
-            final EnumSet<WildcardStates> states = EnumSet.copyOf(expandWildcards);
-            states.remove(WildcardStates.HIDDEN);
-            out.writeEnumSet(states);
-        } else {
-            out.writeEnumSet(expandWildcards);
-        }
+        out.writeEnumSet(expandWildcards);
     }
 
     public static IndicesOptions readIndicesOptions(StreamInput in) throws IOException {
         EnumSet<Option> options = in.readEnumSet(Option.class);
         EnumSet<WildcardStates> states = in.readEnumSet(WildcardStates.class);
-        if (in.getVersion().before(Version.V_7_7_0)) {
-            states.add(WildcardStates.HIDDEN);
-        }
         return new IndicesOptions(options, states);
     }
 
@@ -307,7 +303,6 @@ public class IndicesOptions implements ToXContentFragment {
         if (ignoreThrottled) {
             opts.add(Option.IGNORE_THROTTLED);
         }
-
         return new IndicesOptions(opts, wildcards);
     }
 
@@ -358,8 +353,7 @@ public class IndicesOptions implements ToXContentFragment {
                 defaultSettings.allowAliasesToMultipleIndices(),
                 defaultSettings.forbidClosedIndices(),
                 defaultSettings.ignoreAliases(),
-                nodeBooleanValue(ignoreThrottled, "ignore_throttled", defaultSettings.ignoreThrottled())
-        );
+                nodeBooleanValue(ignoreThrottled, "ignore_throttled", defaultSettings.ignoreThrottled()));
     }
 
     @Override
@@ -394,8 +388,8 @@ public class IndicesOptions implements ToXContentFragment {
 
     /**
      * @return indices options that requires every specified index to exist, expands wildcards only to open indices,
-     *         allows that no indices are resolved from wildcard expressions (not returning an error) and forbids the
-     *         use of closed indices by throwing an error and ignores indices that are throttled.
+     *         allows that no indices are resolved from wildcard expressions (not returning an error),
+     *         forbids the use of closed indices by throwing an error and ignores indices that are throttled.
      */
     public static IndicesOptions strictExpandOpenAndForbidClosedIgnoreThrottled() {
         return STRICT_EXPAND_OPEN_FORBID_CLOSED_IGNORE_THROTTLED;

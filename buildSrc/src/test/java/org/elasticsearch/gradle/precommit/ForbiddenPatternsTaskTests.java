@@ -1,8 +1,28 @@
+/*
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package org.elasticsearch.gradle.precommit;
 
 import org.elasticsearch.gradle.test.GradleUnitTestCase;
+import org.elasticsearch.gradle.util.GradleUtils;
 import org.gradle.api.GradleException;
 import org.gradle.api.Project;
+import org.gradle.api.file.FileTree;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.testfixtures.ProjectBuilder;
 
@@ -14,6 +34,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 public class ForbiddenPatternsTaskTests extends GradleUnitTestCase {
 
@@ -69,12 +91,23 @@ public class ForbiddenPatternsTaskTests extends GradleUnitTestCase {
         return project;
     }
 
-    private ForbiddenPatternsTask createTask(Project project) {
-        return project.getTasks().create("forbiddenPatterns", ForbiddenPatternsTask.class);
+    private ForbiddenPatternsTask createTask(Project project, String taskName) {
+        return project.getTasks().create(taskName, ForbiddenPatternsTask.class, forbiddenPatternsTask -> {
+            forbiddenPatternsTask.getSourceFolders()
+                .addAll(
+                    project.provider(
+                        (Callable<Iterable<? extends FileTree>>) () -> GradleUtils.getJavaSourceSets(project)
+                            .stream()
+                            .map(s -> s.getAllSource())
+                            .collect(Collectors.toList())
+                    )
+                );
+            forbiddenPatternsTask.getRootDir().set(project.getRootDir());
+        });
     }
 
-    private ForbiddenPatternsTask createTask(Project project, String taskName) {
-        return project.getTasks().create(taskName, ForbiddenPatternsTask.class);
+    private ForbiddenPatternsTask createTask(Project project) {
+        return createTask(project, "forbiddenPatterns");
     }
 
     private void writeSourceFile(Project project, String name, String... lines) throws IOException {

@@ -12,12 +12,12 @@ import org.elasticsearch.common.xcontent.ConstructingObjectParser;
 import org.elasticsearch.common.xcontent.ContextParser;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.search.aggregations.AbstractAggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.AggregatorFactories.Builder;
 import org.elasticsearch.search.aggregations.AggregatorFactory;
+import org.elasticsearch.search.aggregations.support.AggregationContext;
 import org.elasticsearch.search.aggregations.support.MultiValuesSourceFieldConfig;
 import org.elasticsearch.search.sort.SortBuilder;
 
@@ -55,7 +55,8 @@ public class TopMetricsAggregationBuilder extends AbstractAggregationBuilder<Top
         PARSER.declareField(constructorArg(), (p, n) -> SortBuilder.fromXContent(p), SORT_FIELD,
                 ObjectParser.ValueType.OBJECT_ARRAY_OR_STRING);
         PARSER.declareInt(optionalConstructorArg(), SIZE_FIELD);
-        ContextParser<Void, MultiValuesSourceFieldConfig.Builder> metricParser = MultiValuesSourceFieldConfig.PARSER.apply(true, false);
+        ContextParser<Void, MultiValuesSourceFieldConfig.Builder> metricParser =
+            MultiValuesSourceFieldConfig.parserBuilder(true, false, false);
         PARSER.declareObjectArray(constructorArg(), (p, n) -> metricParser.parse(p, null).build(), METRIC_FIELD);
     }
 
@@ -119,10 +120,9 @@ public class TopMetricsAggregationBuilder extends AbstractAggregationBuilder<Top
     }
 
     @Override
-    protected AggregatorFactory doBuild(QueryShardContext queryShardContext, AggregatorFactory parent, Builder subFactoriesBuilder)
+    protected AggregatorFactory doBuild(AggregationContext context, AggregatorFactory parent, Builder subFactoriesBuilder)
             throws IOException {
-        return new TopMetricsAggregatorFactory(name, queryShardContext, parent, subFactoriesBuilder, metadata, sortBuilders,
-                size, metricFields);
+        return new TopMetricsAggregatorFactory(name, context, parent, subFactoriesBuilder, metadata, sortBuilders, size, metricFields);
     }
 
     @Override

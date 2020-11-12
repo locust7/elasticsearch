@@ -20,11 +20,14 @@ package org.elasticsearch.gradle.precommit;
 
 import groovy.lang.Closure;
 import org.elasticsearch.gradle.util.GradleUtils;
+import org.elasticsearch.gradle.util.Util;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.NamedDomainObjectContainer;
 import org.gradle.api.Task;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.FileTree;
+import org.gradle.api.file.ProjectLayout;
+import org.gradle.api.tasks.Classpath;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.SourceSet;
@@ -32,6 +35,7 @@ import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.TaskAction;
 import org.gradle.api.tasks.testing.Test;
 
+import javax.inject.Inject;
 import java.io.File;
 import java.io.IOException;
 import java.lang.annotation.Annotation;
@@ -49,6 +53,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -61,8 +66,11 @@ public class TestingConventionsTasks extends DefaultTask {
     private Map<String, File> testClassNames;
 
     private final NamedDomainObjectContainer<TestingConventionRule> naming;
+    private ProjectLayout projectLayout;
 
-    public TestingConventionsTasks() {
+    @Inject
+    public TestingConventionsTasks(ProjectLayout projectLayout) {
+        this.projectLayout = projectLayout;
         setDescription("Tests various testing conventions");
         // Run only after everything is compiled
         GradleUtils.getJavaSourceSets(getProject()).all(sourceSet -> dependsOn(sourceSet.getOutput().getClassesDirs()));
@@ -81,8 +89,8 @@ public class TestingConventionsTasks extends DefaultTask {
     @Input
     public Map<String, File> getTestClassNames() {
         if (testClassNames == null) {
-            testClassNames = GradleUtils.getJavaSourceSets(getProject())
-                .getByName("test")
+            testClassNames = Util.getJavaTestSourceSet(getProject())
+                .get()
                 .getOutput()
                 .getClassesDirs()
                 .getFiles()
@@ -104,7 +112,7 @@ public class TestingConventionsTasks extends DefaultTask {
         return new File(getProject().getBuildDir(), "markers/" + getName());
     }
 
-    public void naming(Closure<TestingConventionRule> action) {
+    public void naming(Closure<?> action) {
         naming.configure(action);
     }
 
@@ -145,7 +153,7 @@ public class TestingConventionsTasks extends DefaultTask {
                 .stream()
                 .collect(Collectors.toMap(Map.Entry::getValue, entry -> loadClassWithoutInitializing(entry.getKey(), isolatedClassLoader)));
 
-            final FileTree allTestClassFiles = getProject().files(
+            final FileTree allTestClassFiles = projectLayout.files(
                 classes.values()
                     .stream()
                     .filter(isStaticClass.negate())
@@ -157,8 +165,10 @@ public class TestingConventionsTasks extends DefaultTask {
 
             final Map<String, Set<File>> classFilesPerTask = getClassFilesPerEnabledTask();
 
+            final Set<File> testSourceSetFiles = Util.getJavaTestSourceSet(getProject()).get().getRuntimeClasspath().getFiles();
             final Map<String, Set<Class<?>>> testClassesPerTask = classFilesPerTask.entrySet()
                 .stream()
+                .filter(entry -> testSourceSetFiles.containsAll(entry.getValue()))
                 .collect(
                     Collectors.toMap(
                         Map.Entry::getKey,
@@ -319,6 +329,7 @@ public class TestingConventionsTasks extends DefaultTask {
     }
 
     private boolean implementsNamingConvention(Class<?> clazz) {
+        Objects.requireNonNull(clazz);
         return implementsNamingConvention(clazz.getName());
     }
 
@@ -343,19 +354,9 @@ public class TestingConventionsTasks extends DefaultTask {
         return false;
     }
 
-    private FileCollection getTestsClassPath() {
-        // Loading the classes depends on the classpath, so we could make this an input annotated with @Classpath.
-        // The reason we don't is that test classes are already inputs and while the dependencies are needed to load
-        // the classes these don't influence the checks done by this task.
-        // A side effect is that we could mark as up-to-date with missing dependencies, but these will be found when
-        // running the tests.
-        return getProject().files(
-            getProject().getConfigurations().getByName("testRuntime").resolve(),
-            GradleUtils.getJavaSourceSets(getProject())
-                .stream()
-                .flatMap(sourceSet -> sourceSet.getOutput().getClassesDirs().getFiles().stream())
-                .collect(Collectors.toList())
-        );
+    @Classpath
+    public FileCollection getTestsClassPath() {
+        return Util.getJavaTestSourceSet(getProject()).get().getRuntimeClasspath();
     }
 
     private Map<String, File> walkPathAndLoadClasses(File testRoot) {

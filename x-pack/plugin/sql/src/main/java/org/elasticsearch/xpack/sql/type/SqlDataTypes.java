@@ -29,7 +29,6 @@ import static java.util.stream.Collectors.toUnmodifiableMap;
 import static org.elasticsearch.xpack.ql.type.DataTypes.BINARY;
 import static org.elasticsearch.xpack.ql.type.DataTypes.BOOLEAN;
 import static org.elasticsearch.xpack.ql.type.DataTypes.BYTE;
-import static org.elasticsearch.xpack.ql.type.DataTypes.CONSTANT_KEYWORD;
 import static org.elasticsearch.xpack.ql.type.DataTypes.DATETIME;
 import static org.elasticsearch.xpack.ql.type.DataTypes.DOUBLE;
 import static org.elasticsearch.xpack.ql.type.DataTypes.FLOAT;
@@ -272,9 +271,7 @@ public class SqlDataTypes {
                 || dataType == DATE         // because of date formats
                 || dataType == DATETIME
                 || dataType == SCALED_FLOAT // because of scaling_factor
-                || dataType == CONSTANT_KEYWORD
                 || dataType == GEO_POINT
-                || dataType == GEO_SHAPE
                 || dataType == SHAPE;
     }
 
@@ -336,9 +333,6 @@ public class SqlDataTypes {
             return JDBCType.VARCHAR;
         }
         if (dataType == TEXT) {
-            return JDBCType.VARCHAR;
-        }
-        if (dataType == CONSTANT_KEYWORD) {
             return JDBCType.VARCHAR;
         }
         if (dataType == DATETIME) {
@@ -464,9 +458,6 @@ public class SqlDataTypes {
         if (dataType == TEXT) {
             return 32766;
         }
-        if (dataType == CONSTANT_KEYWORD) {
-            return 15;
-        }
         if (dataType == DATETIME) {
             return 3;
         }
@@ -587,9 +578,6 @@ public class SqlDataTypes {
         if (dataType == TEXT) {
             return dataType.size();
         }
-        if (dataType == CONSTANT_KEYWORD) {
-            return 32766;
-        }
         if (dataType == DATETIME) {
             return 29;
         }
@@ -654,6 +642,12 @@ public class SqlDataTypes {
         if (t == DATETIME) {
             // ODBC SQL_CODE_TIMESTAMP
             return Integer.valueOf(3);
+        } else if (t == DATE) {
+            // ODBC SQL_CODE_DATE
+            return Integer.valueOf(1);
+        } else if (t == TIME) {
+            // ODBC SQL_CODE_TIME
+            return Integer.valueOf(2);
         }
         // ODBC null
         return 0;
@@ -676,7 +670,7 @@ public class SqlDataTypes {
         if (t.isInteger()) {
             return Short.valueOf((short) 0);
         }
-        if (isDateBased(t) || t.isRational()) {
+        if (t == DATETIME || t == TIME || t.isRational()) {
             return Short.valueOf((short) defaultPrecision(t));
         }
         return null;

@@ -20,6 +20,8 @@
 package org.elasticsearch.index.query;
 
 import org.apache.lucene.analysis.MockSynonymAnalyzer;
+import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.document.SortedNumericDocValuesField;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.queries.BlendedTermQuery;
 import org.apache.lucene.search.AutomatonQuery;
@@ -30,6 +32,7 @@ import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.DisjunctionMaxQuery;
 import org.apache.lucene.search.FuzzyQuery;
+import org.apache.lucene.search.IndexOrDocValuesQuery;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.MultiTermQuery;
@@ -523,6 +526,20 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
             equalTo(new Term(KEYWORD_FIELD_NAME, "test")));
     }
 
+    /**
+     * Test that dissalowing leading wildcards causes exception
+     */
+    public void testAllowLeadingWildcard() throws Exception {
+        Query query = queryStringQuery("*test").field("mapped_string").allowLeadingWildcard(true).toQuery(createShardContext());
+        assertThat(query, instanceOf(WildcardQuery.class));
+        QueryShardException ex = expectThrows(
+            QueryShardException.class,
+            () -> queryStringQuery("*test").field("mapped_string").allowLeadingWildcard(false).toQuery(createShardContext())
+        );
+        assertEquals("Failed to parse query [*test]", ex.getMessage());
+        assertEquals("Cannot parse '*test': '*' or '?' not allowed as first character in WildcardQuery", ex.getCause().getMessage());
+    }
+
     public void testToQueryDisMaxQuery() throws Exception {
         Query query = queryStringQuery("test").field(TEXT_FIELD_NAME, 2.2f)
             .field(KEYWORD_FIELD_NAME)
@@ -797,6 +814,26 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
             }
         }
     }
+
+    public void testToQueryDateWithTimeZone() throws Exception {
+        QueryStringQueryBuilder qsq = queryStringQuery(DATE_FIELD_NAME + ":1970-01-01");
+        QueryShardContext context = createShardContext();
+        Query query = qsq.toQuery(context);
+        assertThat(query, instanceOf(IndexOrDocValuesQuery.class));
+        long lower = 0; // 1970-01-01T00:00:00.999 UTC
+        long upper = 86399999;  // 1970-01-01T23:59:59.999 UTC
+        assertEquals(calculateExpectedDateQuery(lower, upper), query);
+        int msPerHour = 3600000;
+        assertEquals(calculateExpectedDateQuery(lower - msPerHour, upper - msPerHour), qsq.timeZone("+01:00").toQuery(context));
+        assertEquals(calculateExpectedDateQuery(lower + msPerHour, upper + msPerHour), qsq.timeZone("-01:00").toQuery(context));
+    }
+
+    private IndexOrDocValuesQuery calculateExpectedDateQuery(long lower, long upper) {
+        Query query = LongPoint.newRangeQuery(DATE_FIELD_NAME, lower, upper);
+        Query dv = SortedNumericDocValuesField.newSlowRangeQuery(DATE_FIELD_NAME, lower, upper);
+        return new IndexOrDocValuesQuery(query, dv);
+    }
+
     public void testFuzzyNumeric() throws Exception {
         QueryStringQueryBuilder query = queryStringQuery("12~1.0").defaultField(INT_FIELD_NAME);
         QueryShardContext context = createShardContext();
@@ -805,7 +842,7 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
         assertEquals("Can only use fuzzy queries on keyword and text fields - not on [mapped_int] which is of type [integer]",
                 e.getMessage());
         query.lenient(true);
-        query.toQuery(context); // no exception
+        assertThat(query.toQuery(context), Matchers.instanceOf(MatchNoDocsQuery.class));
     }
 
     public void testPrefixNumeric() throws Exception {
@@ -816,18 +853,25 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
         assertEquals("Can only use prefix queries on keyword, text and wildcard fields - not on [mapped_int] which is of type [integer]",
                 e.getMessage());
         query.lenient(true);
-        query.toQuery(context); // no exception
+        assertThat(query.toQuery(context), Matchers.instanceOf(MatchNoDocsQuery.class));
     }
 
     public void testExactGeo() throws Exception {
         QueryStringQueryBuilder query = queryStringQuery("2,3").defaultField(GEO_POINT_FIELD_NAME);
         QueryShardContext context = createShardContext();
-        QueryShardException e = expectThrows(QueryShardException.class,
-                () -> query.toQuery(context));
-        assertEquals("Geo fields do not support exact searching, use dedicated geo queries instead: [mapped_geo_point]",
-                e.getMessage());
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> query.toQuery(context));
+        assertEquals("Field [mapped_geo_point] of type [geo_point] does not support match queries", e.getMessage());
         query.lenient(true);
-        query.toQuery(context); // no exception
+        assertThat(query.toQuery(context), Matchers.instanceOf(MatchNoDocsQuery.class));
+    }
+
+    public void testLenientFlag() throws Exception {
+        QueryStringQueryBuilder query = queryStringQuery("test").defaultField(BINARY_FIELD_NAME);
+        QueryShardContext context = createShardContext();
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> query.toQuery(context));
+        assertEquals("Field [mapped_binary] of type [binary] does not support match queries", e.getMessage());
+        query.lenient(true);
+        assertThat(query.toQuery(context), instanceOf(MatchNoDocsQuery.class));
     }
 
     public void testTimezone() throws Exception {
@@ -1019,7 +1063,7 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
         QueryShardContext context = createShardContext();
         QueryStringQueryBuilder queryBuilder = new QueryStringQueryBuilder(TEXT_FIELD_NAME + ":*");
         Query query = queryBuilder.toQuery(context);
-        if (context.fieldMapper(TEXT_FIELD_NAME).omitNorms() == false) {
+        if (context.getFieldType(TEXT_FIELD_NAME).getTextSearchInfo().hasNorms()) {
             assertThat(query, equalTo(new ConstantScoreQuery(new NormsFieldExistsQuery(TEXT_FIELD_NAME))));
         } else {
             assertThat(query, equalTo(new ConstantScoreQuery(new TermQuery(new Term("_field_names", TEXT_FIELD_NAME)))));
@@ -1029,7 +1073,7 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
             String value = (quoted ? "\"" : "") + TEXT_FIELD_NAME + (quoted ? "\"" : "");
             queryBuilder = new QueryStringQueryBuilder("_exists_:" + value);
             query = queryBuilder.toQuery(context);
-            if (context.fieldMapper(TEXT_FIELD_NAME).omitNorms() == false) {
+            if (context.getFieldType(TEXT_FIELD_NAME).getTextSearchInfo().hasNorms()) {
                 assertThat(query, equalTo(new ConstantScoreQuery(new NormsFieldExistsQuery(TEXT_FIELD_NAME))));
             } else {
                 assertThat(query, equalTo(new ConstantScoreQuery(new TermQuery(new Term("_field_names", TEXT_FIELD_NAME)))));

@@ -18,7 +18,6 @@
  */
 package org.elasticsearch.index.engine;
 
-import org.apache.lucene.codecs.blocktree.BlockTreeTermsReader;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexWriter;
@@ -32,7 +31,8 @@ import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
 import org.elasticsearch.common.util.concurrent.ReleasableLock;
 import org.elasticsearch.core.internal.io.IOUtils;
-import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.mapper.DocumentMapper;
+import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.seqno.SeqNoStats;
 import org.elasticsearch.index.seqno.SequenceNumbers;
 import org.elasticsearch.index.store.Store;
@@ -41,16 +41,14 @@ import org.elasticsearch.index.translog.TranslogConfig;
 import org.elasticsearch.index.translog.TranslogDeletionPolicy;
 import org.elasticsearch.index.translog.TranslogStats;
 import org.elasticsearch.search.suggest.completion.CompletionStats;
+import org.elasticsearch.transport.Transports;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -59,7 +57,7 @@ import java.util.stream.Stream;
  * Note: this engine can be opened side-by-side with a read-write engine but will not reflect any changes made to the read-write
  * engine.
  *
- * @see #ReadOnlyEngine(EngineConfig, SeqNoStats, TranslogStats, boolean, Function)
+ * @see #ReadOnlyEngine(EngineConfig, SeqNoStats, TranslogStats, boolean, Function, boolean)
  */
 public class ReadOnlyEngine extends Engine {
 
@@ -67,8 +65,6 @@ public class ReadOnlyEngine extends Engine {
      * Reader attributes used for read only engines. These attributes prevent loading term dictionaries on-heap even if the field is an
      * ID field.
      */
-    private static final Map<String, String> OFF_HEAP_READER_ATTRIBUTES = Collections.singletonMap(BlockTreeTermsReader.FST_MODE_KEY,
-        BlockTreeTermsReader.FSTLoadMode.OFF_HEAP.name());
     private final SegmentInfos lastCommittedSegmentInfos;
     private final SeqNoStats seqNoStats;
     private final ElasticsearchReaderManager readerManager;
@@ -77,6 +73,7 @@ public class ReadOnlyEngine extends Engine {
     private final RamAccountingRefreshListener refreshListener;
     private final SafeCommitInfo safeCommitInfo;
     private final CompletionStatsCache completionStatsCache;
+    private final boolean requireCompleteHistory;
 
     protected volatile TranslogStats translogStats;
 
@@ -91,11 +88,13 @@ public class ReadOnlyEngine extends Engine {
      * @param obtainLock if <code>true</code> this engine will try to obtain the {@link IndexWriter#WRITE_LOCK_NAME} lock. Otherwise
      *                   the lock won't be obtained
      * @param readerWrapperFunction allows to wrap the index-reader for this engine.
+     * @param requireCompleteHistory indicates whether this engine permits an incomplete history (i.e. LCP &lt; MSN)
      */
     public ReadOnlyEngine(EngineConfig config, SeqNoStats seqNoStats, TranslogStats translogStats, boolean obtainLock,
-                   Function<DirectoryReader, DirectoryReader> readerWrapperFunction) {
+                          Function<DirectoryReader, DirectoryReader> readerWrapperFunction, boolean requireCompleteHistory) {
         super(config);
         this.refreshListener = new RamAccountingRefreshListener(engineConfig.getCircuitBreakerService());
+        this.requireCompleteHistory = requireCompleteHistory;
         try {
             Store store = config.getStore();
             store.incRef();
@@ -136,6 +135,9 @@ public class ReadOnlyEngine extends Engine {
     }
 
     protected void ensureMaxSeqNoEqualsToGlobalCheckpoint(final SeqNoStats seqNoStats) {
+        if (requireCompleteHistory == false) {
+            return;
+        }
         // Before 8.0 the global checkpoint is not known and up to date when the engine is created after
         // peer recovery, so we only check the max seq no / global checkpoint coherency when the global
         // checkpoint is different from the unassigned sequence number value.
@@ -175,7 +177,8 @@ public class ReadOnlyEngine extends Engine {
     }
 
     protected DirectoryReader open(IndexCommit commit) throws IOException {
-        return new SoftDeletesDirectoryReaderWrapper(DirectoryReader.open(commit, OFF_HEAP_READER_ATTRIBUTES), Lucene.SOFT_DELETES_FIELD);
+        assert Transports.assertNotTransportThread("opening index commit of a read-only engine");
+        return new SoftDeletesDirectoryReaderWrapper(DirectoryReader.open(commit), Lucene.SOFT_DELETES_FIELD);
     }
 
     @Override
@@ -216,8 +219,8 @@ public class ReadOnlyEngine extends Engine {
     }
 
     @Override
-    public GetResult get(Get get, BiFunction<String, SearcherScope, Engine.Searcher> searcherFactory) throws EngineException {
-        return getFromSearcher(get, searcherFactory, SearcherScope.EXTERNAL);
+    public GetResult get(Get get, DocumentMapper mapper, Function<Searcher, Searcher> searcherWrapper) {
+        return getFromSearcher(get, acquireSearcher("get", SearcherScope.EXTERNAL, searcherWrapper));
     }
 
     @Override
@@ -288,8 +291,8 @@ public class ReadOnlyEngine extends Engine {
     }
 
     @Override
-    public Translog.Snapshot newChangesSnapshot(String source, MapperService mapperService, long fromSeqNo, long toSeqNo,
-                                                boolean requiredFullRange)  {
+    public Translog.Snapshot newChangesSnapshot(String source, Function<String, MappedFieldType> fieldTypeLookup, long fromSeqNo,
+                                                long toSeqNo, boolean requiredFullRange)  {
         return newEmptySnapshot();
     }
 
@@ -485,7 +488,8 @@ public class ReadOnlyEngine extends Engine {
     }
 
     protected static DirectoryReader openDirectory(Directory directory) throws IOException {
-        final DirectoryReader reader = DirectoryReader.open(directory, OFF_HEAP_READER_ATTRIBUTES);
+        assert Transports.assertNotTransportThread("opening directory reader of a read-only engine");
+        final DirectoryReader reader = DirectoryReader.open(directory);
         return new SoftDeletesDirectoryReaderWrapper(reader, Lucene.SOFT_DELETES_FIELD);
     }
 

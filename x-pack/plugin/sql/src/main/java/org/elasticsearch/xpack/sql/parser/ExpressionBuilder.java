@@ -119,6 +119,7 @@ import org.elasticsearch.xpack.sql.type.SqlDataTypes;
 
 import java.time.Duration;
 import java.time.Period;
+import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAmount;
 import java.util.ArrayList;
@@ -132,16 +133,18 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.elasticsearch.xpack.sql.type.SqlDataTypeConverter.canConvert;
 import static org.elasticsearch.xpack.sql.type.SqlDataTypeConverter.converterFor;
+import static org.elasticsearch.xpack.sql.util.DateUtils.asDateOnly;
 import static org.elasticsearch.xpack.sql.util.DateUtils.asTimeOnly;
-import static org.elasticsearch.xpack.sql.util.DateUtils.dateOfEscapedLiteral;
 import static org.elasticsearch.xpack.sql.util.DateUtils.dateTimeOfEscapedLiteral;
 
 abstract class ExpressionBuilder extends IdentifierBuilder {
 
     private final Map<Token, SqlTypedParamValue> params;
+    private final ZoneId zoneId;
 
-    ExpressionBuilder(Map<Token, SqlTypedParamValue> params) {
+    ExpressionBuilder(Map<Token, SqlTypedParamValue> params, ZoneId zoneId) {
         this.params = params;
+        this.zoneId = zoneId;
     }
 
     protected Expression expression(ParseTree ctx) {
@@ -191,19 +194,19 @@ abstract class ExpressionBuilder extends IdentifierBuilder {
 
         switch (op.getSymbol().getType()) {
             case SqlBaseParser.EQ:
-                return new Equals(source, left, right);
+                return new Equals(source, left, right, zoneId);
             case SqlBaseParser.NULLEQ:
-                return new NullEquals(source, left, right);
+                return new NullEquals(source, left, right, zoneId);
             case SqlBaseParser.NEQ:
-                return new NotEquals(source, left, right);
+                return new NotEquals(source, left, right, zoneId);
             case SqlBaseParser.LT:
-                return new LessThan(source, left, right);
+                return new LessThan(source, left, right, zoneId);
             case SqlBaseParser.LTE:
-                return new LessThanOrEqual(source, left, right);
+                return new LessThanOrEqual(source, left, right, zoneId);
             case SqlBaseParser.GT:
-                return new GreaterThan(source, left, right);
+                return new GreaterThan(source, left, right, zoneId);
             case SqlBaseParser.GTE:
-                return new GreaterThanOrEqual(source, left, right);
+                return new GreaterThanOrEqual(source, left, right, zoneId);
             default:
                 throw new ParsingException(source, "Unknown operator {}", source.text());
         }
@@ -224,13 +227,13 @@ abstract class ExpressionBuilder extends IdentifierBuilder {
         Expression e = null;
         switch (pCtx.kind.getType()) {
             case SqlBaseParser.BETWEEN:
-                e = new Range(source, exp, expression(pCtx.lower), true, expression(pCtx.upper), true);
+                e = new Range(source, exp, expression(pCtx.lower), true, expression(pCtx.upper), true, zoneId);
                 break;
             case SqlBaseParser.IN:
                 if (pCtx.query() != null) {
                     throw new ParsingException(source, "IN query not supported yet");
                 }
-                e = new In(source, exp, expressions(pCtx.valueExpression()));
+                e = new In(source, exp, expressions(pCtx.valueExpression()), zoneId);
                 break;
             case SqlBaseParser.LIKE:
                 e = new Like(source, exp, visitPattern(pCtx.pattern()));
@@ -267,12 +270,6 @@ abstract class ExpressionBuilder extends IdentifierBuilder {
         if (pattern == null) {
             throw new ParsingException(source(ctx.value), "Pattern must not be [null]");
         }
-        int pos = pattern.indexOf('*');
-        if (pos >= 0) {
-            throw new ParsingException(source(ctx.value),
-                    "Invalid char [*] found in pattern [{}] at position {}; use [%] or [_] instead",
-                    pattern, pos);
-        }
 
         char escape = 0;
         PatternEscapeContext escapeCtx = ctx.patternEscape();
@@ -285,8 +282,9 @@ abstract class ExpressionBuilder extends IdentifierBuilder {
             } else if (escapeString.length() == 1) {
                 escape = escapeString.charAt(0);
                 // these chars already have a meaning
-                if (escape == '*' || escape == '%' || escape == '_') {
-                    throw new ParsingException(source(escapeCtx.escape), "Char [{}] cannot be used for escaping", escape);
+                if (escape == '%' || escape == '_') {
+                    throw new ParsingException(source(escapeCtx.escape),
+                            "Char [{}] cannot be used for escaping as it's one of the wildcard chars [%_]", escape);
                 }
                 // lastly validate that escape chars (if present) are followed by special chars
                 for (int i = 0; i < pattern.length(); i++) {
@@ -300,8 +298,8 @@ abstract class ExpressionBuilder extends IdentifierBuilder {
                         char next = pattern.charAt(i + 1);
                         if (next != '%' && next != '_') {
                             throw new ParsingException(source(ctx.value),
-                                    "Pattern [{}] is invalid as escape char [{}] at position {} can only escape wildcard chars; found [{}]",
-                                    pattern, escape, i, next);
+                                    "Pattern [{}] is invalid as escape char [{}] at position {} can only escape "
+                                    + "wildcard chars [%_]; found [{}]", pattern, escape, i, next);
                         }
                     }
                 }
@@ -473,7 +471,7 @@ abstract class ExpressionBuilder extends IdentifierBuilder {
         for (SqlBaseParser.WhenClauseContext when : ctx.whenClause()) {
             if (ctx.operand != null) {
                 expressions.add(new IfConditional(source(when),
-                    new Equals(source(when), expression(ctx.operand), expression(when.condition)), expression(when.result)));
+                    new Equals(source(when), expression(ctx.operand), expression(when.condition), zoneId), expression(when.result)));
             } else {
                 expressions.add(new IfConditional(source(when), expression(when.condition), expression(when.result)));
             }
@@ -775,7 +773,7 @@ abstract class ExpressionBuilder extends IdentifierBuilder {
         Source source = source(ctx);
         // parse yyyy-MM-dd (time optional but is set to 00:00:00.000 because of the conversion to DATE
         try {
-            return new Literal(source, dateOfEscapedLiteral(string), SqlDataTypes.DATE);
+            return new Literal(source, asDateOnly(string), SqlDataTypes.DATE);
         } catch(DateTimeParseException ex) {
             throw new ParsingException(source, "Invalid date received; {}", ex.getMessage());
         }

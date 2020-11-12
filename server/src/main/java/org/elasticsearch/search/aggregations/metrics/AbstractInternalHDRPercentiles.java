@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import java.util.zip.DataFormatException;
 
 abstract class AbstractInternalHDRPercentiles extends InternalNumericMetricsAggregation.MultiValue {
@@ -86,7 +87,12 @@ abstract class AbstractInternalHDRPercentiles extends InternalNumericMetricsAggr
         return value(Double.parseDouble(name));
     }
 
-    DocValueFormat formatter() {
+    @Override
+    public Iterable<String> valueNames() {
+        return Arrays.stream(getKeys()).mapToObj(d -> String.valueOf(d)).collect(Collectors.toList());
+    }
+
+    public DocValueFormat formatter() {
         return format;
     }
 
@@ -96,8 +102,25 @@ abstract class AbstractInternalHDRPercentiles extends InternalNumericMetricsAggr
         return state.getEstimatedFootprintInBytes();
     }
 
-    DoubleHistogram getState() {
+    /**
+     * Return the internal {@link DoubleHistogram} sketch for this metric.
+     */
+    public DoubleHistogram getState() {
         return state;
+    }
+
+    /**
+     * Return the keys (percentiles) requested.
+     */
+    public double[] getKeys() {
+        return keys;
+    }
+
+    /**
+     * Should the output be keyed.
+     */
+    public boolean keyed() {
+        return keyed;
     }
 
     @Override

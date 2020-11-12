@@ -13,7 +13,6 @@ import org.elasticsearch.action.bulk.BulkAction;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.search.SearchAction;
-import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.ParentTaskAssigningClient;
@@ -102,15 +101,15 @@ public class RollupJobTask extends AllocatedPersistentTask implements SchedulerE
 
         ClientRollupPageManager(RollupJob job, IndexerState initialState, Map<String, Object> initialPosition,
                                 Client client) {
-            super(threadPool.executor(ThreadPool.Names.GENERIC), job, new AtomicReference<>(initialState), initialPosition);
+            super(threadPool, ThreadPool.Names.GENERIC, job, new AtomicReference<>(initialState), initialPosition);
             this.client = client;
             this.job = job;
         }
 
         @Override
-        protected void doNextSearch(SearchRequest request, ActionListener<SearchResponse> nextPhase) {
-            ClientHelper.executeWithHeadersAsync(job.getHeaders(), ClientHelper.ROLLUP_ORIGIN, client, SearchAction.INSTANCE, request,
-                    nextPhase);
+        protected void doNextSearch(long waitTimeInNanos, ActionListener<SearchResponse> nextPhase) {
+            ClientHelper.executeWithHeadersAsync(job.getHeaders(), ClientHelper.ROLLUP_ORIGIN, client, SearchAction.INSTANCE,
+                    buildSearchRequest(), nextPhase);
         }
 
         @Override

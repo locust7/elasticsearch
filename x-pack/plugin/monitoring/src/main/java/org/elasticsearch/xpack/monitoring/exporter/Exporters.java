@@ -23,6 +23,7 @@ import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.gateway.GatewayService;
 import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.xpack.core.ssl.SSLService;
+import org.elasticsearch.xpack.monitoring.Monitoring;
 import org.elasticsearch.xpack.monitoring.exporter.http.HttpExporter;
 import org.elasticsearch.xpack.core.monitoring.exporter.MonitoringDoc;
 import org.elasticsearch.xpack.monitoring.exporter.local.LocalExporter;
@@ -62,7 +63,9 @@ public class Exporters extends AbstractLifecycleComponent {
 
         final List<Setting.AffixSetting<?>> dynamicSettings =
             getSettings().stream().filter(Setting::isDynamic).collect(Collectors.toList());
-        clusterService.getClusterSettings().addSettingsUpdateConsumer(this::setExportersSetting, dynamicSettings);
+        final List<Setting<?>> updateSettings = new ArrayList<Setting<?>>(dynamicSettings);
+        updateSettings.add(Monitoring.MIGRATION_DECOMMISSION_ALERTS);
+        clusterService.getClusterSettings().addSettingsUpdateConsumer(this::setExportersSetting, updateSettings);
         HttpExporter.registerSettingValidators(clusterService, sslService);
         // this ensures that logging is happening by adding an empty consumer per affix setting
         for (Setting.AffixSetting<?> affixSetting : dynamicSettings) {
@@ -243,7 +246,12 @@ public class Exporters extends AbstractLifecycleComponent {
                 } else {
                     listener.onFailure(exceptionRef.get());
                 }
-            }, listener::onFailure));
+            }, (exception) -> {
+                if (exceptionRef.get() != null) {
+                    exception.addSuppressed(exceptionRef.get());
+                }
+                listener.onFailure(exception);
+            }));
         }
     }
 
@@ -254,6 +262,7 @@ public class Exporters extends AbstractLifecycleComponent {
         List<Setting.AffixSetting<?>> settings = new ArrayList<>();
         settings.addAll(Exporter.getSettings());
         settings.addAll(HttpExporter.getSettings());
+        settings.addAll(LocalExporter.getSettings());
         return settings;
     }
 

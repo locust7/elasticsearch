@@ -32,8 +32,8 @@ import org.elasticsearch.common.bytes.ReleasableBytesReference;
 import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.InboundHandler;
 import org.elasticsearch.transport.InboundPipeline;
+import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.Transports;
 
 import java.nio.channels.ClosedChannelException;
@@ -56,13 +56,14 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
     Netty4MessageChannelHandler(PageCacheRecycler recycler, Netty4Transport transport) {
         this.transport = transport;
         final ThreadPool threadPool = transport.getThreadPool();
-        final InboundHandler inboundHandler = transport.getInboundHandler();
+        final Transport.RequestHandlers requestHandlers = transport.getRequestHandlers();
         this.pipeline = new InboundPipeline(transport.getVersion(), transport.getStatsTracker(), recycler, threadPool::relativeTimeInMillis,
-            transport.getInflightBreaker(), inboundHandler::getRequestHandler, transport::inboundMessage);
+            transport.getInflightBreaker(), requestHandlers::getHandler, transport::inboundMessage);
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
         assert Transports.assertTransportThread();
         assert msg instanceof ByteBuf : "Expected message type ByteBuf, found: " + msg.getClass();
 
@@ -76,6 +77,7 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
         ExceptionsHelper.maybeDieOnAnotherThread(cause);
         final Throwable unwrapped = ExceptionsHelper.unwrap(cause, ElasticsearchException.class);
         final Throwable newCause = unwrapped != null ? unwrapped : cause;
@@ -90,12 +92,15 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
         assert msg instanceof ByteBuf;
+        assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
         final boolean queued = queuedWrites.offer(new WriteOperation((ByteBuf) msg, promise));
         assert queued;
+        assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
     }
 
     @Override
     public void channelWritabilityChanged(ChannelHandlerContext ctx) {
+        assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
         if (ctx.channel().isWritable()) {
             doFlush(ctx);
         }
@@ -104,6 +109,7 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
 
     @Override
     public void flush(ChannelHandlerContext ctx) {
+        assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
         Channel channel = ctx.channel();
         if (channel.isWritable() || channel.isActive() == false) {
             doFlush(ctx);
@@ -112,6 +118,7 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        assert Transports.assertDefaultThreadContext(transport.getThreadPool().getThreadContext());
         doFlush(ctx);
         Releasables.closeWhileHandlingException(pipeline);
         super.channelInactive(ctx);

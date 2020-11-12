@@ -26,6 +26,7 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 
 import java.io.BufferedReader;
 import java.io.FilterInputStream;
+import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -51,45 +52,19 @@ public abstract class Streams {
 
     public static final int BUFFER_SIZE = 1024 * 8;
 
-
-    //---------------------------------------------------------------------
-    // Copy methods for java.io.InputStream / java.io.OutputStream
-    //---------------------------------------------------------------------
-
-
-    public static long copy(InputStream in, OutputStream out) throws IOException {
-        return copy(in, out, new byte[BUFFER_SIZE]);
-    }
-
     /**
-     * Copy the contents of the given InputStream to the given OutputStream.
-     * Closes both streams when done.
-     *
-     * @param in  the stream to copy from
-     * @param out the stream to copy to
-     * @return the number of bytes copied
-     * @throws IOException in case of I/O errors
+     * OutputStream that just throws all the bytes away
      */
-    public static long copy(InputStream in, OutputStream out, byte[] buffer) throws IOException {
-        Objects.requireNonNull(in, "No InputStream specified");
-        Objects.requireNonNull(out, "No OutputStream specified");
-        // Leverage try-with-resources to close in and out so that exceptions in close() are either propagated or added as suppressed
-        // exceptions to the main exception
-        try (InputStream in2 = in; OutputStream out2 = out) {
-            return doCopy(in2, out2, buffer);
+    public static final OutputStream NULL_OUTPUT_STREAM = new OutputStream() {
+        @Override
+        public void write(int b) {
+            // no-op
         }
-    }
-
-    private static long doCopy(InputStream in, OutputStream out, byte[] buffer) throws IOException {
-        long byteCount = 0;
-        int bytesRead;
-        while ((bytesRead = in.read(buffer)) != -1) {
-            out.write(buffer, 0, bytesRead);
-            byteCount += bytesRead;
+        @Override
+        public void write(byte[] b, int off, int len) {
+            // no-op
         }
-        out.flush();
-        return byteCount;
-    }
+    };
 
     /**
      * Copy the contents of the given byte array to the given OutputStream.
@@ -209,7 +184,7 @@ public abstract class Streams {
      * Fully consumes the input stream, throwing the bytes away. Returns the number of bytes consumed.
      */
     public static long consumeFully(InputStream inputStream) throws IOException {
-        return copy(inputStream, new NullOutputStream());
+        return org.elasticsearch.core.internal.io.Streams.copy(inputStream, NULL_OUTPUT_STREAM);
     }
 
     public static List<String> readAllLines(InputStream input) throws IOException {
@@ -243,6 +218,27 @@ public abstract class Streams {
     }
 
     /**
+     * Wraps an {@link OutputStream} such that it's {@code close} method becomes a noop
+     *
+     * @param stream {@code OutputStream} to wrap
+     * @return wrapped {@code OutputStream}
+     */
+    public static OutputStream noCloseStream(OutputStream stream) {
+        return new FilterOutputStream(stream) {
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                out.write(b, off, len);
+            }
+
+            @Override
+            public void close() {
+                // noop
+            }
+        };
+    }
+
+    /**
      * Wraps the given {@link BytesStream} in a {@link StreamOutput} that simply flushes when
      * close is called.
      */
@@ -254,11 +250,9 @@ public abstract class Streams {
      * Reads all bytes from the given {@link InputStream} and closes it afterwards.
      */
     public static BytesReference readFully(InputStream in) throws IOException {
-        try (InputStream inputStream = in) {
-            BytesStreamOutput out = new BytesStreamOutput();
-            copy(inputStream, out);
-            return out.bytes();
-        }
+        BytesStreamOutput out = new BytesStreamOutput();
+        org.elasticsearch.core.internal.io.Streams.copy(in, out);
+        return out.bytes();
     }
 
     /**
@@ -382,22 +376,6 @@ public abstract class Streams {
             if (limitOnLastMark != NO_MARK) {
                 currentLimit = limitOnLastMark;
             }
-        }
-    }
-
-    /**
-     * OutputStream that just throws all the bytes away
-     */
-    static class NullOutputStream extends OutputStream {
-
-        @Override
-        public void write(int b) {
-
-        }
-
-        @Override
-        public void write(byte[] b, int off, int len) {
-
         }
     }
 }

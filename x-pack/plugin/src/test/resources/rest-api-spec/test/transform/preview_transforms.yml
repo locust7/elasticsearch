@@ -260,27 +260,25 @@ setup:
         body: >
           {
             "source": { "index": "airline-data" },
-            "dest": { "pipeline": "missing-pipeline" },
             "pivot": {
               "group_by": {
                 "time": {"date_histogram": {"fixed_interval": "1h", "field": "time"}}},
               "aggs": {
-                "vals": {"terms": {"field":"airline"}}
+                "vals": {"significant_terms": {"field":"airline"}}
               }
             }
           }
   - do:
-      catch: /Unsupported aggregation type \[terms\]/
+      catch: /Unsupported aggregation type \[significant_terms\]/
       transform.preview_transform:
         body: >
           {
             "source": { "index": "airline-data" },
-            "dest": { "pipeline": "missing-pipeline" },
             "pivot": {
               "group_by": {
                 "time": {"date_histogram": {"fixed_interval": "1h", "field": "time"}}},
               "aggs": {
-                "vals": {"terms": {"field":"airline"}}
+                "vals": {"significant_terms": {"field":"airline"}}
               }
             }
           }

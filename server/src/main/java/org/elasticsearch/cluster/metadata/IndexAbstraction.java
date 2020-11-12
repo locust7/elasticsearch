@@ -67,9 +67,20 @@ public interface IndexAbstraction {
     IndexMetadata getWriteIndex();
 
     /**
+     * @return the data stream to which this index belongs or <code>null</code> if this is not a concrete index or
+     * if it is a concrete index that does not belong to a data stream.
+     */
+    @Nullable DataStream getParentDataStream();
+
+    /**
      * @return whether this index abstraction is hidden or not
      */
     boolean isHidden();
+
+    /**
+     * @return whether this index abstraction should be treated as a system index or not
+     */
+    boolean isSystem();
 
     /**
      * An index abstraction type.
@@ -113,9 +124,15 @@ public interface IndexAbstraction {
     class Index implements IndexAbstraction {
 
         private final IndexMetadata concreteIndex;
+        private final DataStream dataStream;
+
+        public Index(IndexMetadata indexMetadata, DataStream dataStream) {
+            this.concreteIndex = indexMetadata;
+            this.dataStream = dataStream;
+        }
 
         public Index(IndexMetadata indexMetadata) {
-            this.concreteIndex = indexMetadata;
+            this(indexMetadata, null);
         }
 
         @Override
@@ -139,8 +156,18 @@ public interface IndexAbstraction {
         }
 
         @Override
+        public DataStream getParentDataStream() {
+            return dataStream;
+        }
+
+        @Override
         public boolean isHidden() {
             return INDEX_HIDDEN_SETTING.get(concreteIndex.getSettings());
+        }
+
+        @Override
+        public boolean isSystem() {
+            return concreteIndex.isSystem();
         }
     }
 
@@ -182,8 +209,19 @@ public interface IndexAbstraction {
         }
 
         @Override
+        public DataStream getParentDataStream() {
+            // aliases may not be part of a data stream
+            return null;
+        }
+
+        @Override
         public boolean isHidden() {
             return isHidden;
+        }
+
+        @Override
+        public boolean isSystem() {
+            return referenceIndexMetadatas.stream().allMatch(IndexMetadata::isSystem);
         }
 
         /**
@@ -251,10 +289,86 @@ public interface IndexAbstraction {
                     Strings.collectionToCommaDelimitedString(nonHiddenOn) + "]; alias must have the same is_hidden setting " +
                     "on all indices");
             }
+
+            // Validate system status
+
+            final Map<Boolean, List<IndexMetadata>> groupedBySystemStatus = referenceIndexMetadatas.stream()
+                .collect(Collectors.groupingBy(IndexMetadata::isSystem));
+            // If the alias has either all system or all non-system, then no more validation is required
+            if (isNonEmpty(groupedBySystemStatus.get(false)) && isNonEmpty(groupedBySystemStatus.get(true))) {
+                final List<String> newVersionSystemIndices = groupedBySystemStatus.get(true).stream()
+                    .filter(i -> i.getCreationVersion().onOrAfter(IndexNameExpressionResolver.SYSTEM_INDEX_ENFORCEMENT_VERSION))
+                    .map(i -> i.getIndex().getName())
+                    .sorted() // reliable error message for testing
+                    .collect(Collectors.toList());
+
+                if (newVersionSystemIndices.isEmpty() == false) {
+                    final List<String> nonSystemIndices = groupedBySystemStatus.get(false).stream()
+                        .map(i -> i.getIndex().getName())
+                        .sorted() // reliable error message for testing
+                        .collect(Collectors.toList());
+                    throw new IllegalStateException("alias [" + aliasName + "] refers to both system indices " + newVersionSystemIndices +
+                        " and non-system indices: " + nonSystemIndices + ", but aliases must refer to either system or" +
+                        " non-system indices, not both");
+                }
+            }
         }
 
         private boolean isNonEmpty(List<IndexMetadata> idxMetas) {
             return (Objects.isNull(idxMetas) || idxMetas.isEmpty()) == false;
+        }
+    }
+
+    class DataStream implements IndexAbstraction {
+
+        private final org.elasticsearch.cluster.metadata.DataStream dataStream;
+        private final List<IndexMetadata> dataStreamIndices;
+        private final IndexMetadata writeIndex;
+
+        public DataStream(org.elasticsearch.cluster.metadata.DataStream dataStream, List<IndexMetadata> dataStreamIndices) {
+            this.dataStream = dataStream;
+            this.dataStreamIndices = List.copyOf(dataStreamIndices);
+            this.writeIndex =  dataStreamIndices.get(dataStreamIndices.size() - 1);
+        }
+
+        @Override
+        public String getName() {
+            return dataStream.getName();
+        }
+
+        @Override
+        public Type getType() {
+            return Type.DATA_STREAM;
+        }
+
+        @Override
+        public List<IndexMetadata> getIndices() {
+            return dataStreamIndices;
+        }
+
+        public IndexMetadata getWriteIndex() {
+            return writeIndex;
+        }
+
+        @Override
+        public DataStream getParentDataStream() {
+            // a data stream cannot have a parent data stream
+            return null;
+        }
+
+        @Override
+        public boolean isHidden() {
+            return dataStream.isHidden();
+        }
+
+        @Override
+        public boolean isSystem() {
+            // No such thing as system data streams (yet)
+            return false;
+        }
+
+        public org.elasticsearch.cluster.metadata.DataStream getDataStream() {
+            return dataStream;
         }
     }
 }

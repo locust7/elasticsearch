@@ -43,6 +43,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.VersionType;
+import org.elasticsearch.index.bulk.stats.ShardBulkStats;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.VersionConflictEngineException;
 import org.elasticsearch.index.mapper.MapperService;
@@ -56,6 +57,7 @@ import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.threadpool.ThreadPool.Names;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -225,7 +227,7 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
                     } catch (IOException e) {
                         throw new AssertionError(e);
                     }
-                }), latch::countDown), threadPool);
+                }), latch::countDown), threadPool, Names.WRITE);
 
         latch.await();
     }
@@ -787,6 +789,7 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
         when(shard.indexSettings()).thenReturn(indexSettings);
         when(shard.shardId()).thenReturn(shardId);
         when(shard.mapperService()).thenReturn(mock(MapperService.class));
+        when(shard.getBulkOperationListener()).thenReturn(mock(ShardBulkStats.class));
 
         UpdateHelper updateHelper = mock(UpdateHelper.class);
         when(updateHelper.prepare(any(), eq(shard), any())).thenReturn(
@@ -811,7 +814,7 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
                     DocWriteResponse response = primaryResponse.getResponse();
                     assertThat(response.status(), equalTo(RestStatus.CREATED));
                     assertThat(response.getSeqNo(), equalTo(13L));
-                }), latch), threadPool);
+                }), latch), threadPool, Names.WRITE);
         latch.await();
     }
 
@@ -884,7 +887,8 @@ public class TransportShardBulkActionTests extends IndexShardTestCase {
                         // Assert that we still need to fsync the location that was successfully written
                         assertThat(((WritePrimaryResult<BulkShardRequest, BulkShardResponse>) result).location,
                             equalTo(resultLocation1))), latch),
-                rejectingThreadPool);
+                rejectingThreadPool,
+                Names.WRITE);
             latch.await();
 
             assertThat("mappings were \"updated\" once", updateCalled.get(), equalTo(1));

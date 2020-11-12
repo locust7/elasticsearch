@@ -20,7 +20,6 @@
 package org.elasticsearch.test;
 
 import com.carrotsearch.hppc.ObjectArrayList;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
@@ -86,7 +85,7 @@ public abstract class TestCluster implements Closeable {
     /**
      * This method checks all the things that need to be checked after each test
      */
-    public void assertAfterTest() throws IOException {
+    public void assertAfterTest() throws Exception {
         ensureEstimatedStats();
     }
 

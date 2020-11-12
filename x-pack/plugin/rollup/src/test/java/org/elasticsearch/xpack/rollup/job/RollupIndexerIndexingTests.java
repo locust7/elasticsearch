@@ -38,7 +38,6 @@ import org.elasticsearch.index.mapper.ContentPath;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.index.mapper.KeywordFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
-import org.elasticsearch.index.mapper.Mapper;
 import org.elasticsearch.index.mapper.NumberFieldMapper;
 import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.index.query.RangeQueryBuilder;
@@ -47,6 +46,8 @@ import org.elasticsearch.search.aggregations.AggregatorTestCase;
 import org.elasticsearch.search.aggregations.bucket.composite.CompositeAggregation;
 import org.elasticsearch.search.aggregations.bucket.composite.CompositeAggregationBuilder;
 import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogramInterval;
+import org.elasticsearch.threadpool.TestThreadPool;
+import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xpack.core.indexing.IndexerState;
 import org.elasticsearch.xpack.core.rollup.ConfigTestHelpers;
 import org.elasticsearch.xpack.core.rollup.job.DateHistogramGroupConfig;
@@ -71,9 +72,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -275,7 +273,7 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
                         asMap("the_histo", now)
                 )
         );
-        final Rounding rounding = dateHistoConfig.createRounding();
+        final Rounding.Prepared rounding = dateHistoConfig.createRounding();
         executeTestCase(dataset, job, now, (resp) -> {
             assertThat(resp.size(), equalTo(3));
             IndexRequest request = resp.get(0);
@@ -339,7 +337,7 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
                 asMap("the_histo", now)
             )
         );
-        final Rounding rounding = dateHistoConfig.createRounding();
+        final Rounding.Prepared rounding = dateHistoConfig.createRounding();
         executeTestCase(dataset, job, now, (resp) -> {
             assertThat(resp.size(), equalTo(2));
             IndexRequest request = resp.get(0);
@@ -508,14 +506,15 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
         IndexReader reader = DirectoryReader.open(dir);
         IndexSearcher searcher = new IndexSearcher(reader);
         String dateHistoField = config.getGroupConfig().getDateHistogram().getField();
-        final ExecutorService executor = Executors.newFixedThreadPool(1);
+        final ThreadPool threadPool = new TestThreadPool(getTestName());
+
         try {
             RollupJob job = new RollupJob(config, Collections.emptyMap());
-            final SyncRollupIndexer action = new SyncRollupIndexer(executor, job, searcher,
+            final SyncRollupIndexer action = new SyncRollupIndexer(threadPool, ThreadPool.Names.GENERIC, job, searcher,
                     fieldTypeLookup.values().toArray(new MappedFieldType[0]), fieldTypeLookup.get(dateHistoField));
             rollupConsumer.accept(action.triggerAndWaitForCompletion(now));
         } finally {
-            executor.shutdownNow();
+            ThreadPool.terminate(threadPool, 30, TimeUnit.SECONDS);
             reader.close();
             dir.close();
         }
@@ -529,17 +528,14 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
      */
     private Map<String, MappedFieldType> createFieldTypes(RollupJobConfig job) {
         Map<String, MappedFieldType> fieldTypes = new HashMap<>();
-        MappedFieldType fieldType = new DateFieldMapper.Builder(job.getGroupConfig().getDateHistogram().getField())
-                .format(randomFrom("basic_date", "date_optional_time", "epoch_second"))
-                .locale(Locale.ROOT)
-                .build(new Mapper.BuilderContext(settings.getSettings(), new ContentPath(0)))
-                .fieldType();
+        DateFormatter formatter = DateFormatter.forPattern(randomDateFormatterPattern()).withLocale(Locale.ROOT);
+        MappedFieldType fieldType = new DateFieldMapper.DateFieldType(job.getGroupConfig().getDateHistogram().getField(), formatter);
         fieldTypes.put(fieldType.name(), fieldType);
 
         if (job.getGroupConfig().getHistogram() != null) {
             for (String field : job.getGroupConfig().getHistogram().getFields()) {
-                MappedFieldType ft = new NumberFieldMapper.Builder(field, NumberFieldMapper.NumberType.LONG)
-                        .build(new Mapper.BuilderContext(settings.getSettings(), new ContentPath(0)))
+                MappedFieldType ft = new NumberFieldMapper.Builder(field, NumberFieldMapper.NumberType.LONG, false, false)
+                        .build(new ContentPath(0))
                         .fieldType();
                 fieldTypes.put(ft.name(), ft);
             }
@@ -548,7 +544,7 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
         if (job.getGroupConfig().getTerms() != null) {
             for (String field : job.getGroupConfig().getTerms().getFields()) {
                 MappedFieldType ft = new KeywordFieldMapper.Builder(field)
-                        .build(new Mapper.BuilderContext(settings.getSettings(), new ContentPath(0)))
+                        .build(new ContentPath(0))
                         .fieldType();
                 fieldTypes.put(ft.name(), ft);
             }
@@ -556,8 +552,8 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
 
         if (job.getMetricsConfig() != null) {
             for (MetricConfig metric : job.getMetricsConfig()) {
-                MappedFieldType ft = new NumberFieldMapper.Builder(metric.getField(), NumberFieldMapper.NumberType.LONG)
-                        .build(new Mapper.BuilderContext(settings.getSettings(), new ContentPath(0)))
+                MappedFieldType ft = new NumberFieldMapper.Builder(metric.getField(), NumberFieldMapper.NumberType.LONG, false, false)
+                        .build(new ContentPath(0))
                         .fieldType();
                 fieldTypes.put(ft.name(), ft);
             }
@@ -611,9 +607,9 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
         private final CountDownLatch latch = new CountDownLatch(1);
         private Exception exc;
 
-        SyncRollupIndexer(Executor executor, RollupJob job, IndexSearcher searcher,
+        SyncRollupIndexer(ThreadPool threadPool, String executorName, RollupJob job, IndexSearcher searcher,
                           MappedFieldType[] fieldTypes, MappedFieldType timestampField) {
-            super(executor, job, new AtomicReference<>(IndexerState.STARTED), null);
+            super(threadPool, executorName, job, new AtomicReference<>(IndexerState.STARTED), null);
             this.searcher = searcher;
             this.fieldTypes = fieldTypes;
             this.timestampField = timestampField;
@@ -637,7 +633,8 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
         }
 
         @Override
-        protected void doNextSearch(SearchRequest request, ActionListener<SearchResponse> listener) {
+        protected void doNextSearch(long waitTimeInNanos, ActionListener<SearchResponse> listener) {
+            SearchRequest request = buildSearchRequest();
             assertNotNull(request.source());
 
             // extract query
@@ -656,7 +653,7 @@ public class RollupIndexerIndexingTests extends AggregatorTestCase {
 
             CompositeAggregation result = null;
             try {
-                result = search(searcher, query, aggBuilder, fieldTypes);
+                result = searchAndReduce(searcher, query, aggBuilder, fieldTypes);
             } catch (IOException e) {
                 listener.onFailure(e);
             }

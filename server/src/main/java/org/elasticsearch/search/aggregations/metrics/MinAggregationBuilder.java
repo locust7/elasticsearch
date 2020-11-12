@@ -23,10 +23,10 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
-import org.elasticsearch.search.aggregations.AggregatorFactories.Builder;
+import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.AggregatorFactory;
+import org.elasticsearch.search.aggregations.support.AggregationContext;
 import org.elasticsearch.search.aggregations.support.CoreValuesSourceType;
 import org.elasticsearch.search.aggregations.support.ValuesSource;
 import org.elasticsearch.search.aggregations.support.ValuesSourceAggregationBuilder;
@@ -39,6 +39,10 @@ import java.util.Map;
 
 public class MinAggregationBuilder extends ValuesSourceAggregationBuilder.LeafOnly<ValuesSource.Numeric, MinAggregationBuilder> {
     public static final String NAME = "min";
+    public static final ValuesSourceRegistry.RegistryKey<MetricAggregatorSupplier> REGISTRY_KEY = new ValuesSourceRegistry.RegistryKey<>(
+        NAME,
+        MetricAggregatorSupplier.class
+    );
 
     public static final ObjectParser<MinAggregationBuilder, String> PARSER = ObjectParser.fromBuilder(NAME, MinAggregationBuilder::new);
     static {
@@ -49,17 +53,19 @@ public class MinAggregationBuilder extends ValuesSourceAggregationBuilder.LeafOn
         super(name);
     }
 
-    protected MinAggregationBuilder(MinAggregationBuilder clone, Builder factoriesBuilder, Map<String, Object> metadata) {
+    protected MinAggregationBuilder(MinAggregationBuilder clone,
+                                    AggregatorFactories.Builder factoriesBuilder,
+                                    Map<String, Object> metadata) {
         super(clone, factoriesBuilder, metadata);
     }
 
     @Override
-    protected AggregationBuilder shallowCopy(Builder factoriesBuilder, Map<String, Object> metadata) {
+    protected AggregationBuilder shallowCopy(AggregatorFactories.Builder factoriesBuilder, Map<String, Object> metadata) {
         return new MinAggregationBuilder(this, factoriesBuilder, metadata);
     }
 
-    public static void registerAggregators(ValuesSourceRegistry valuesSourceRegistry) {
-        MinAggregatorFactory.registerAggregators(valuesSourceRegistry);
+    public static void registerAggregators(ValuesSourceRegistry.Builder builder) {
+        MinAggregatorFactory.registerAggregators(builder);
     }
 
     /**
@@ -80,9 +86,10 @@ public class MinAggregationBuilder extends ValuesSourceAggregationBuilder.LeafOn
     }
 
     @Override
-    protected MinAggregatorFactory innerBuild(QueryShardContext queryShardContext, ValuesSourceConfig config,
-                                              AggregatorFactory parent, Builder subFactoriesBuilder) throws IOException {
-        return new MinAggregatorFactory(name, config, queryShardContext, parent, subFactoriesBuilder, metadata);
+    protected MinAggregatorFactory innerBuild(AggregationContext context, ValuesSourceConfig config,
+                                              AggregatorFactory parent,
+                                              AggregatorFactories.Builder subFactoriesBuilder) throws IOException {
+        return new MinAggregatorFactory(name, config, context, parent, subFactoriesBuilder, metadata);
     }
 
     @Override
@@ -93,5 +100,10 @@ public class MinAggregationBuilder extends ValuesSourceAggregationBuilder.LeafOn
     @Override
     public String getType() {
         return NAME;
+    }
+
+    @Override
+    protected ValuesSourceRegistry.RegistryKey<?> getRegistryKey() {
+        return REGISTRY_KEY;
     }
 }

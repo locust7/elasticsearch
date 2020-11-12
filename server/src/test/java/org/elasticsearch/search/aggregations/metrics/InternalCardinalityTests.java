@@ -20,8 +20,6 @@
 package org.elasticsearch.search.aggregations.metrics;
 
 import com.carrotsearch.hppc.BitMixer;
-
-import org.elasticsearch.common.io.stream.Writeable.Reader;
 import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.MockBigArrays;
@@ -44,7 +42,7 @@ public class InternalCardinalityTests extends InternalAggregationTestCase<Intern
     public void setUp() throws Exception {
         super.setUp();
         algos = new ArrayList<>();
-        p = randomIntBetween(HyperLogLogPlusPlus.MIN_PRECISION, HyperLogLogPlusPlus.MAX_PRECISION);
+        p = randomIntBetween(AbstractHyperLogLog.MIN_PRECISION, AbstractHyperLogLog.MAX_PRECISION);
     }
 
     @After //we force @After to have it run before ESTestCase#after otherwise it fails
@@ -65,11 +63,6 @@ public class InternalCardinalityTests extends InternalAggregationTestCase<Intern
             hllpp.collect(0, BitMixer.mix64(randomIntBetween(1, 100)));
         }
         return new InternalCardinality(name, hllpp, metadata);
-    }
-
-    @Override
-    protected Reader<InternalCardinality> instanceReader() {
-        return InternalCardinality::new;
     }
 
     @Override
@@ -97,7 +90,7 @@ public class InternalCardinalityTests extends InternalAggregationTestCase<Intern
     @Override
     protected InternalCardinality mutateInstance(InternalCardinality instance) {
         String name = instance.getName();
-        HyperLogLogPlusPlus state = instance.getState();
+        AbstractHyperLogLogPlusPlus state = instance.getState();
         Map<String, Object> metadata = instance.getMetadata();
         switch (between(0, 2)) {
         case 0:
@@ -106,9 +99,7 @@ public class InternalCardinalityTests extends InternalAggregationTestCase<Intern
         case 1:
             HyperLogLogPlusPlus newState = new HyperLogLogPlusPlus(state.precision(),
                     new MockBigArrays(new MockPageCacheRecycler(Settings.EMPTY), new NoneCircuitBreakerService()), 0);
-            newState.merge(0, state, 0);
-            int extraValues = between(10, 100);
-            for (int i = 0; i < extraValues; i++) {
+            for (int i = 0; i < 10; i++) {
                 newState.collect(0, BitMixer.mix64(randomIntBetween(500, 10000)));
             }
             algos.add(newState);

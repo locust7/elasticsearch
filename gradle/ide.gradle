@@ -16,7 +16,7 @@ buildscript {
 allprojects {
   apply plugin: 'idea'
 
-  tasks.named('idea') {
+  tasks.named('idea').configure {
     doFirst { throw new GradleException("Use of the 'idea' task has been deprecated. For details on importing into IntelliJ see CONTRIBUTING.md.") }
   }
 }
@@ -38,6 +38,12 @@ if (System.getProperty('idea.active') == 'true') {
     }
   }
 
+  tasks.register('buildDependencyArtifacts') {
+    group = 'ide'
+    description = 'Builds artifacts needed as dependency for IDE modules'
+    dependsOn ':client:rest-high-level:shadowJar'
+  }
+
   idea {
     project {
       vcs = 'Git'
@@ -49,7 +55,7 @@ if (System.getProperty('idea.active') == 'true') {
           testRunner = 'choose_per_test'
         }
         taskTriggers {
-          afterSync tasks.named('configureIdeaGradleJvm')
+          afterSync tasks.named('configureIdeaGradleJvm'), tasks.named('buildDependencyArtifacts')
         }
         codeStyle {
           java {
@@ -61,16 +67,14 @@ if (System.getProperty('idea.active') == 'true') {
         }
         compiler {
           parallelCompilation = true
+          processHeapSize = 2048
+          addNotNullAssertions = false
           javac {
             generateDeprecationWarnings = false
+            preferTargetJDKCompiler = false
           }
         }
         runConfigurations {
-          'Debug Elasticsearch'(Remote) {
-            mode = 'listen'
-            host = 'localhost'
-            port = 5005
-          }
           defaults(JUnit) {
             vmParameters = '-ea -Djava.locale.providers=SPI,COMPAT'
           }

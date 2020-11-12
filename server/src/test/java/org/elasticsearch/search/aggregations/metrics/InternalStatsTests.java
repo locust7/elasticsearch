@@ -19,7 +19,6 @@
 package org.elasticsearch.search.aggregations.metrics;
 
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
@@ -33,6 +32,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
+
+import static java.util.Collections.emptyMap;
 
 public class InternalStatsTests extends InternalAggregationTestCase<InternalStats> {
 
@@ -146,11 +149,6 @@ public class InternalStatsTests extends InternalAggregationTestCase<InternalStat
     }
 
     @Override
-    protected Writeable.Reader<InternalStats> instanceReader() {
-        return InternalStats::new;
-    }
-
-    @Override
     protected InternalStats mutateInstance(InternalStats instance) {
         String name = instance.getName();
         long count = instance.getCount();
@@ -253,6 +251,18 @@ public class InternalStatsTests extends InternalAggregationTestCase<InternalStat
             "  \"avg\" : null,\n" +
             "  \"sum\" : 0.0\n" +
             "}", Strings.toString(builder));
+    }
+
+    public void testIterator() {
+        InternalStats aggregation = createTestInstance("test", emptyMap());
+        List<String> names = StreamSupport.stream(aggregation.valueNames().spliterator(), false).collect(Collectors.toList());
+
+        assertEquals(5, names.size());
+        assertTrue(names.contains("min"));
+        assertTrue(names.contains("max"));
+        assertTrue(names.contains("count"));
+        assertTrue(names.contains("avg"));
+        assertTrue(names.contains("sum"));
     }
 }
 

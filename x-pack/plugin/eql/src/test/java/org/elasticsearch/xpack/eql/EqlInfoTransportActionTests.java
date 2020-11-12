@@ -57,20 +57,16 @@ public class EqlInfoTransportActionTests extends ESTestCase {
 
     public void testAvailable() {
         EqlInfoTransportAction featureSet = new EqlInfoTransportAction(
-            mock(TransportService.class), mock(ActionFilters.class), Settings.EMPTY, licenseState);
+            mock(TransportService.class), mock(ActionFilters.class), licenseState);
         boolean available = randomBoolean();
-        when(licenseState.isEqlAllowed()).thenReturn(available);
+        when(licenseState.isAllowed(XPackLicenseState.Feature.EQL)).thenReturn(available);
         assertThat(featureSet.available(), is(available));
     }
 
     public void testEnabled() {
-        boolean enabled = randomBoolean();
-        Settings.Builder settings = Settings.builder();
-        settings.put("xpack.eql.enabled", enabled);
-        
         EqlInfoTransportAction featureSet = new EqlInfoTransportAction(
-            mock(TransportService.class), mock(ActionFilters.class), settings.build(), licenseState);
-        assertThat(featureSet.enabled(), is(enabled));
+            mock(TransportService.class), mock(ActionFilters.class), licenseState);
+        assertThat(featureSet.enabled(), is(true));
     }
 
     @SuppressWarnings("unchecked")
@@ -105,15 +101,15 @@ public class EqlInfoTransportActionTests extends ESTestCase {
         when(clusterService.localNode()).thenReturn(mockNode);
 
         var usageAction = new EqlUsageTransportAction(mock(TransportService.class), clusterService, null,
-            mock(ActionFilters.class), null, Settings.builder().put("xpack.eql.enabled", true).build(), licenseState, client);
+            mock(ActionFilters.class), null, licenseState, client);
         PlainActionFuture<XPackUsageFeatureResponse> future = new PlainActionFuture<>();
         usageAction.masterOperation(mock(Task.class), null, null, future);
         EqlFeatureSetUsage eqlUsage = (EqlFeatureSetUsage) future.get().getUsage();
-        
+
         long fooBarBaz = ObjectPath.eval("foo.bar.baz", eqlUsage.stats());
         long fooFoo = ObjectPath.eval("foo.foo", eqlUsage.stats());
         long spam = ObjectPath.eval("spam", eqlUsage.stats());
-        
+
         assertThat(eqlUsage.stats().keySet(), containsInAnyOrder("foo", "spam"));
         assertThat(fooBarBaz, is(5L));
         assertThat(fooFoo, is(1L));
