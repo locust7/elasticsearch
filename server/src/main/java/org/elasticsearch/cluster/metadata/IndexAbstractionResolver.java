@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.cluster.metadata;
@@ -141,16 +130,17 @@ public class IndexAbstractionResolver {
             return isVisible && includeDataStreams;
         }
         assert indexAbstraction.getIndices().size() == 1 : "concrete index must point to a single index";
-        IndexMetadata indexMetadata = indexAbstraction.getIndices().get(0);
-        if (isVisible == false) {
-            return false;
-        }
-
-        // the index is not hidden and since it is a date math expression, we consider it visible regardless of open/closed
+        // since it is a date math expression, we consider the index visible regardless of open/closed/hidden as the user is using
+        // date math to explicitly reference the index
         if (dateMathExpression) {
             assert IndexMetadata.State.values().length == 2 : "a new IndexMetadata.State value may need to be handled!";
             return true;
         }
+        if (isVisible == false) {
+            return false;
+        }
+
+        IndexMetadata indexMetadata = indexAbstraction.getIndices().get(0);
         if (indexMetadata.getState() == IndexMetadata.State.CLOSE && indicesOptions.expandWildcardsClosed()) {
             return true;
         }

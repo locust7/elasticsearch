@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.plugins;
@@ -39,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -50,7 +40,7 @@ public class PluginInfo implements Writeable, ToXContentObject {
     public static final String ES_PLUGIN_PROPERTIES = "plugin-descriptor.properties";
     public static final String ES_PLUGIN_POLICY = "plugin-security.policy";
 
-    private static final Version QUOTA_FS_PLUGIN_SUPPORT = Version.V_7_11_0;
+    private static final Version LICENSED_PLUGINS_SUPPORT = Version.V_7_11_0;
 
     private final String name;
     private final String description;
@@ -62,6 +52,7 @@ public class PluginInfo implements Writeable, ToXContentObject {
     private final boolean hasNativeController;
     private final PluginType type;
     private final String javaOpts;
+    private final boolean isLicensed;
 
     /**
      * Construct plugin info.
@@ -76,10 +67,11 @@ public class PluginInfo implements Writeable, ToXContentObject {
      * @param hasNativeController   whether or not the plugin has a native controller
      * @param type                  the type of the plugin. Expects "bootstrap" or "isolated".
      * @param javaOpts              any additional JVM CLI parameters added by this plugin
+     * @param isLicensed            whether is this a licensed plugin
      */
     public PluginInfo(String name, String description, String version, Version elasticsearchVersion, String javaVersion,
                       String classname, List<String> extendedPlugins, boolean hasNativeController,
-                      PluginType type, String javaOpts) {
+                      PluginType type, String javaOpts, boolean isLicensed) {
         this.name = name;
         this.description = description;
         this.version = version;
@@ -90,6 +82,7 @@ public class PluginInfo implements Writeable, ToXContentObject {
         this.hasNativeController = hasNativeController;
         this.type = type;
         this.javaOpts = javaOpts;
+        this.isLicensed = isLicensed;
     }
 
     /**
@@ -108,12 +101,14 @@ public class PluginInfo implements Writeable, ToXContentObject {
         extendedPlugins = in.readStringList();
         hasNativeController = in.readBoolean();
 
-        if (in.getVersion().onOrAfter(QUOTA_FS_PLUGIN_SUPPORT)) {
+        if (in.getVersion().onOrAfter(LICENSED_PLUGINS_SUPPORT)) {
             type = PluginType.valueOf(in.readString());
             javaOpts = in.readOptionalString();
+            isLicensed = in.readBoolean();
         } else {
             type = PluginType.ISOLATED;
             javaOpts = null;
+            isLicensed = false;
         }
     }
 
@@ -128,9 +123,10 @@ public class PluginInfo implements Writeable, ToXContentObject {
         out.writeStringCollection(extendedPlugins);
         out.writeBoolean(hasNativeController);
 
-        if (out.getVersion().onOrAfter(QUOTA_FS_PLUGIN_SUPPORT)) {
+        if (out.getVersion().onOrAfter(LICENSED_PLUGINS_SUPPORT)) {
             out.writeString(type.name());
             out.writeOptionalString(javaOpts);
+            out.writeBoolean(isLicensed);
         }
     }
 
@@ -204,12 +200,14 @@ public class PluginInfo implements Writeable, ToXContentObject {
             );
         }
 
+        boolean isLicensed = parseBooleanValue(name, "licensed", propsMap.remove("licensed"));
+
         if (propsMap.isEmpty() == false) {
             throw new IllegalArgumentException("Unknown properties for plugin [" + name + "] in plugin descriptor: " + propsMap.keySet());
         }
 
         return new PluginInfo(name, description, version, esVersion, javaVersionString,
-                              classname, extendedPlugins, hasNativeController, type, javaOpts);
+                              classname, extendedPlugins, hasNativeController, type, javaOpts, isLicensed);
     }
 
     private static PluginType getPluginType(String name, String rawType) {
@@ -228,7 +226,7 @@ public class PluginInfo implements Writeable, ToXContentObject {
 
     private static String getClassname(String name, PluginType type, String classname) {
         if (type == PluginType.BOOTSTRAP) {
-            if (!Strings.isNullOrEmpty(classname)) {
+            if (Strings.isNullOrEmpty(classname) == false) {
                 throw new IllegalArgumentException(
                     "property [classname] can only have a value when [type] is set to [bootstrap] for plugin [" + name + "]"
                 );
@@ -350,6 +348,13 @@ public class PluginInfo implements Writeable, ToXContentObject {
         return javaOpts;
     }
 
+    /**
+     * Whether this plugin is subject to the Elastic License.
+     */
+    public boolean isLicensed() {
+        return isLicensed;
+    }
+
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject();
@@ -362,6 +367,7 @@ public class PluginInfo implements Writeable, ToXContentObject {
             builder.field("classname", classname);
             builder.field("extended_plugins", extendedPlugins);
             builder.field("has_native_controller", hasNativeController);
+            builder.field("licensed", isLicensed);
             builder.field("type", type);
             if (type == PluginType.BOOTSTRAP) {
                 builder.field("java_opts", javaOpts);
@@ -379,11 +385,9 @@ public class PluginInfo implements Writeable, ToXContentObject {
 
         PluginInfo that = (PluginInfo) o;
 
-        if (!name.equals(that.name)) return false;
+        if (name.equals(that.name) == false) return false;
         // TODO: since the plugins are unique by their directory name, this should only be a name check, version should not matter?
-        if (version != null ? !version.equals(that.version) : that.version != null) return false;
-
-        return true;
+        return Objects.equals(version, that.version);
     }
 
     @Override
@@ -405,6 +409,7 @@ public class PluginInfo implements Writeable, ToXContentObject {
             .append(prefix).append("Elasticsearch Version: ").append(elasticsearchVersion).append("\n")
             .append(prefix).append("Java Version: ").append(javaVersion).append("\n")
             .append(prefix).append("Native Controller: ").append(hasNativeController).append("\n")
+            .append(prefix).append("Licensed: ").append(isLicensed).append("\n")
             .append(prefix).append("Type: ").append(type).append("\n");
 
         if (type == PluginType.BOOTSTRAP) {
